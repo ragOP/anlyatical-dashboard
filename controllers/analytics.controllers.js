@@ -233,7 +233,7 @@ exports.handleGetAllWebsiteViews = async (req, res) => {
           history[dayString] = {
             uniqueVisitors: dailyUniqueVisitors,
             totalVisits: dailyTotalVisits,
-            conversionPercentage: `${dailyConversionPercentage}%`,
+            conversionPercentage: `${dailyConversionPercentage}`,
           };
 
           currentDate = currentDate.subtract(1, "day");
@@ -244,7 +244,7 @@ exports.handleGetAllWebsiteViews = async (req, res) => {
           websiteName: visit.websiteName,
           uniqueVisitors,
           totalVisits,
-          conversionPercentage: `${conversionPercentage}%`,
+          conversionPercentage: `${conversionPercentage}`,
           buttonClicks,
           dateRange: startDate ? { startDate, endDate } : { startDate: "All Time", endDate: "All Time" },
           history,
@@ -440,8 +440,8 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
       history[dayString] = {
         uniqueVisitors: dailyUniqueVisitors,
         totalVisits: dailyTotalVisits,
-        conversionPercentage: `${dailyConversionPercentage}%`,
-        bounceRate: `${dailyBounceRate}%`,
+        conversionPercentage: `${dailyConversionPercentage}`,
+        bounceRate: `${dailyBounceRate}`,
       };
 
       currentDate = currentDate.subtract(1, "day");
@@ -454,10 +454,10 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
         websiteName: websiteVisit.websiteName,
         uniqueVisitors,
         totalVisits,
-        conversionPercentage: `${conversionPercentage}%`,
+        conversionPercentage: `${conversionPercentage}`,
         buttonClicks,
         averageSessionDuration: `${averageSessionDuration} seconds`,
-        bounceRate: `${bounceRate}%`,
+        bounceRate: `${bounceRate}`,
         dateRange: startDate ? { startDate, endDate } : { startDate: "All Time", endDate: "All Time" },
         history,
       },
