@@ -14,7 +14,6 @@ const websiteVisitSchema = new mongoose.Schema({
   ipAddresses: [
     {
       type: String,
-      unique: true,
     },
   ],
   visits: [

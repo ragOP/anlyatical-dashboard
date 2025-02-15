@@ -157,12 +157,10 @@ exports.handleClickWebsite = async (req, res) => {
 exports.handleGetAllWebsiteViews = async (req, res) => {
   try {
     let { startDate, endDate } = req.query;
-    let dateFilter = {};
 
     if (startDate && endDate) {
-      startDate = new Date(startDate);
-      endDate = new Date(endDate);
-      endDate.setHours(23, 59, 59, 999);
+      startDate = dayjs(startDate).startOf("day").toDate();
+      endDate = dayjs(endDate).endOf("day").toDate();
 
       if (isNaN(startDate) || isNaN(endDate)) {
         return res.status(400).json({
@@ -170,21 +168,22 @@ exports.handleGetAllWebsiteViews = async (req, res) => {
           message: "Invalid date format",
         });
       }
-
-      dateFilter = { "visits.visitedAt": { $gte: startDate, $lte: endDate } };
+    } else {
+      endDate = dayjs().endOf("day").toDate();
+      startDate = dayjs().subtract(7, "days").startOf("day").toDate();
     }
+
+    let dateFilter = startDate && endDate ? { "visits.visitedAt": { $gte: startDate, $lte: endDate } } : {};
 
     const websiteVisits = await WebsiteVisit.find(dateFilter);
 
     const websiteStats = await Promise.all(
       websiteVisits.map(async (visit) => {
-        const buttonData = await ButtonClick.findOne({
-          websiteId: visit.websiteId,
-          ...(startDate &&
-            endDate && {
-              "buttons.clickedAt": { $gte: startDate, $lte: endDate },
-            }),
-        });
+        const buttonData = await ButtonClick.findOne(
+          startDate && endDate
+            ? { websiteId: visit.websiteId, "buttons.clickedAt": { $gte: startDate, $lte: endDate } }
+            : { websiteId: visit.websiteId }
+        );
 
         const buttonClicks = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
 
@@ -196,33 +195,59 @@ exports.handleGetAllWebsiteViews = async (req, res) => {
           });
         }
 
-        const filteredVisits = startDate
-          ? visit.visits.filter(
-              (v) => v.visitedAt >= startDate && v.visitedAt <= endDate
-            )
+        const filteredVisits = startDate && endDate
+          ? visit.visits.filter((v) => v.visitedAt >= startDate && v.visitedAt <= endDate)
           : visit.visits;
 
         const totalVisits = filteredVisits.length;
-        const uniqueVisitors = new Set(filteredVisits.map((v) => v.ipAddress))
-          .size;
-
+        const uniqueVisitors = new Set(filteredVisits.map((v) => v.ipAddress)).size;
         const fifthButtonClicks = buttonClicks[5];
 
         const conversionPercentage =
-          totalVisits > 0
-            ? ((fifthButtonClicks / totalVisits) * 100).toFixed(2)
-            : "0";
+          totalVisits > 0 ? ((fifthButtonClicks / totalVisits) * 100).toFixed(2) : "0";
+
+        let history = {};
+        let currentDate = dayjs();
+
+        for (let i = 0; i < 7; i++) {
+          const dayString = currentDate.format("dddd");
+          const dateString = currentDate.format("YYYY-MM-DD");
+
+          const dailyVisits = filteredVisits.filter(
+            (visit) => dayjs(visit.visitedAt).format("YYYY-MM-DD") === dateString
+          );
+
+          const dailyTotalVisits = dailyVisits.length;
+          const dailyUniqueVisitors = new Set(dailyVisits.map((v) => v.ipAddress)).size;
+
+          const dailyButtonClicks = buttonData?.buttons.filter(
+            (btn) => dayjs(btn.clickedAt).format("YYYY-MM-DD") === dateString
+          );
+
+          const dailyFifthButtonClicks =
+            dailyButtonClicks?.reduce((acc, btn) => (btn.buttonId === 5 ? acc + btn.clicked : acc), 0) || 0;
+
+          const dailyConversionPercentage =
+            dailyTotalVisits > 0 ? ((dailyFifthButtonClicks / dailyTotalVisits) * 100).toFixed(2) : "0";
+
+          history[dayString] = {
+            uniqueVisitors: dailyUniqueVisitors,
+            totalVisits: dailyTotalVisits,
+            conversionPercentage: `${dailyConversionPercentage}%`,
+          };
+
+          currentDate = currentDate.subtract(1, "day");
+        }
 
         return {
           websiteId: visit.websiteId,
           websiteName: visit.websiteName,
           uniqueVisitors,
           totalVisits,
-          conversionPercentage: `${conversionPercentage}`,
+          conversionPercentage: `${conversionPercentage}%`,
           buttonClicks,
-          dateRange: startDate
-            ? { startDate, endDate }
-            : { startDate: "All Time", endDate: "All Time" },
+          dateRange: startDate ? { startDate, endDate } : { startDate: "All Time", endDate: "All Time" },
+          history,
         };
       })
     );
@@ -238,6 +263,7 @@ exports.handleGetAllWebsiteViews = async (req, res) => {
     });
   }
 };
+
 
 exports.handleStartSession = async (req, res) => {
   try {
@@ -312,6 +338,7 @@ exports.handleSessionTransaction = async (req, res) => {
 exports.handleGetWebsiteAnalytics = async (req, res) => {
   try {
     const { websiteId } = req.params;
+    let { startDate, endDate } = req.query;
 
     if (!websiteId) {
       return res.status(400).json({
@@ -320,15 +347,16 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
       });
     }
 
-    let endDate = dayjs().endOf("day").toDate();
-    let startDate = dayjs().subtract(7, "days").startOf("day").toDate();
+    let dateFilter = {};
+    if (startDate && endDate) {
+      startDate = dayjs(startDate).startOf("day").toDate();
+      endDate = dayjs(endDate).endOf("day").toDate();
+      dateFilter = { $gte: startDate, $lte: endDate };
+    }
 
-    let dateFilter = { $gte: startDate, $lte: endDate };
-
-    const websiteVisit = await WebsiteVisit.findOne({
-      websiteId,
-      "visits.visitedAt": dateFilter,
-    });
+    const websiteVisit = await WebsiteVisit.findOne(
+      startDate && endDate ? { websiteId, "visits.visitedAt": dateFilter } : { websiteId }
+    );
 
     if (!websiteVisit) {
       return res.status(404).json({
@@ -337,10 +365,9 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
       });
     }
 
-    const buttonData = await ButtonClick.findOne({
-      websiteId,
-      "buttons.clickedAt": dateFilter,
-    });
+    const buttonData = await ButtonClick.findOne(
+      startDate && endDate ? { websiteId, "buttons.clickedAt": dateFilter } : { websiteId }
+    );
 
     const buttonClicks = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
 
@@ -352,47 +379,36 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
       });
     }
 
-    const filteredVisits = websiteVisit.visits.filter(
-      (v) => v.visitedAt >= startDate && v.visitedAt <= endDate
-    );
+    const filteredVisits = startDate && endDate
+      ? websiteVisit.visits.filter((v) => v.visitedAt >= startDate && v.visitedAt <= endDate)
+      : websiteVisit.visits;
 
     const totalVisits = filteredVisits.length;
     const uniqueVisitors = new Set(filteredVisits.map((v) => v.ipAddress)).size;
     const fifthButtonClicks = buttonClicks[5];
 
     const conversionPercentage =
-      totalVisits > 0
-        ? ((fifthButtonClicks / totalVisits) * 100).toFixed(2)
-        : "0";
+      totalVisits > 0 ? ((fifthButtonClicks / totalVisits) * 100).toFixed(2) : "0";
 
-    const sessions = await sessionModel.find({
-      websiteId,
-      updatedAt: dateFilter,
-    });
+    const sessions = await sessionModel.find(
+      startDate && endDate ? { websiteId, updatedAt: dateFilter } : { websiteId }
+    );
 
     const totalSessions = sessions.length;
-    const totalDuration = sessions.reduce(
-      (acc, session) => acc + (session.sessionDuration || 0),
-      0
-    );
+    const totalDuration = sessions.reduce((acc, session) => acc + (session.sessionDuration || 0), 0);
     const bounces = sessions.filter((session) => session.interactions === 0).length;
 
-    const averageSessionDuration = totalSessions
-      ? (totalDuration / totalSessions).toFixed(2)
-      : "0";
-
-    const bounceRate = totalSessions
-      ? ((bounces / totalSessions) * 100).toFixed(2)
-      : "0";
+    const averageSessionDuration = totalSessions ? (totalDuration / totalSessions).toFixed(2) : "0";
+    const bounceRate = totalSessions ? ((bounces / totalSessions) * 100).toFixed(2) : "0";
 
     let history = {};
-    let currentDate = dayjs(endDate);
+    let currentDate = dayjs();
 
-    for (let i = 0; i <= 7; i++) {
+    for (let i = 0; i < 7; i++) {
       const dayString = currentDate.format("dddd");
       const dateString = currentDate.format("YYYY-MM-DD");
 
-      const dailyVisits = filteredVisits.filter(
+      const dailyVisits = websiteVisit.visits.filter(
         (visit) => dayjs(visit.visitedAt).format("YYYY-MM-DD") === dateString
       );
 
@@ -413,9 +429,8 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
         (btn) => dayjs(btn.clickedAt).format("YYYY-MM-DD") === dateString
       );
 
-      const dailyFifthButtonClicks = dailyButtonClicks?.reduce((acc, btn) => {
-        return btn.buttonId === 5 ? acc + btn.clicked : acc;
-      }, 0) || 0;
+      const dailyFifthButtonClicks =
+        dailyButtonClicks?.reduce((acc, btn) => (btn.buttonId === 5 ? acc + btn.clicked : acc), 0) || 0;
 
       const dailyConversionPercentage =
         dailyTotalVisits > 0
@@ -443,7 +458,7 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
         buttonClicks,
         averageSessionDuration: `${averageSessionDuration} seconds`,
         bounceRate: `${bounceRate}%`,
-        dateRange: { startDate, endDate },
+        dateRange: startDate ? { startDate, endDate } : { startDate: "All Time", endDate: "All Time" },
         history,
       },
     });
@@ -454,6 +469,7 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
     });
   }
 };
+
 
 exports.handlePostTodo = async (req, res) => {
   try {
