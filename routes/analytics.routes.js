@@ -15,7 +15,7 @@ const route = express.Router();
 
 route.post("/button", handleclickButton);
 route.post("/website", handleClickWebsite);
-route.post("/analytics/all-website-views", handleGetAllWebsiteViews);
+route.get("/analytics/all-website-views", handleGetAllWebsiteViews);
 route.post("/session/start", handleStartSession);
 route.post("/session/end", handleEndSession);
 route.post("/session/interaction", handleSessionTransaction);
