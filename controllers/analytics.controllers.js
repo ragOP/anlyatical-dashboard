@@ -1,6 +1,8 @@
 const requestIp = require("request-ip");
 const ButtonClick = require("../model/button.model");
 const WebsiteVisit = require("../model/website.model");
+const sessionModel = require("../model/session.model");
+const Todo = require("../model/todo.model");
 
 exports.handleclickButton = async (req, res) => {
   try {
@@ -177,9 +179,10 @@ exports.handleGetAllWebsiteViews = async (req, res) => {
       websiteVisits.map(async (visit) => {
         const buttonData = await ButtonClick.findOne({
           websiteId: visit.websiteId,
-          ...(startDate && endDate && {
-            "buttons.clickedAt": { $gte: startDate, $lte: endDate },
-          }),
+          ...(startDate &&
+            endDate && {
+              "buttons.clickedAt": { $gte: startDate, $lte: endDate },
+            }),
         });
 
         const buttonClicks = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
@@ -231,6 +234,242 @@ exports.handleGetAllWebsiteViews = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || "Internal Server Error",
+    });
+  }
+};
+
+exports.handleStartSession = async (req, res) => {
+  try {
+    const { websiteId, sessionId } = req.body;
+    const clientIp = requestIp.getClientIp(req);
+
+    if (!websiteId || !sessionId) {
+      return res.status(400).send({
+        success: false,
+        message: "websiteId and sessionId are required",
+      });
+    }
+
+    await sessionModel.create({
+      websiteId,
+      sessionId,
+      startTime: new Date(),
+      clientIp,
+      interactions: 0,
+    });
+
+    res.status(200).send({ success: true, message: "Session started" });
+  } catch (error) {
+    res.status(500).send({ success: false, message: error.message });
+  }
+};
+
+exports.handleEndSession = async (req, res) => {
+  try {
+    const { websiteId, sessionId } = req.body;
+
+    const session = await sessionModel.findOne({ websiteId, sessionId });
+    if (!session) {
+      return res
+        .status(404)
+        .send({ success: false, message: "Session not found" });
+    }
+
+    const endTime = new Date();
+    const sessionDuration = (endTime - session.startTime) / 1000;
+
+    await sessionModel.updateOne(
+      { websiteId, sessionId },
+      { $set: { endTime, sessionDuration } }
+    );
+
+    res.status(200).send({
+      success: true,
+      message: "Session ended",
+      duration: sessionDuration,
+    });
+  } catch (error) {
+    res.status(500).send({ success: false, message: error.message });
+  }
+};
+
+exports.handleSessionTransaction = async (req, res) => {
+  try {
+    const { websiteId, sessionId } = req.body;
+
+    await sessionModel.updateOne(
+      { websiteId, sessionId },
+      { $inc: { interactions: 1 } }
+    );
+
+    res.status(200).send({ success: true, message: "Interaction recorded" });
+  } catch (error) {
+    res.status(500).send({ success: false, message: error.message });
+  }
+};
+
+exports.handleGetWebsiteAnalytics = async (req, res) => {
+  try {
+    const { websiteId } = req.params;
+    let { startDate, endDate } = req.query;
+    let dateFilter = {};
+
+    if (!websiteId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Website ID is required" });
+    }
+
+    if (startDate && endDate) {
+      startDate = new Date(startDate);
+      endDate = new Date(endDate);
+      endDate.setHours(23, 59, 59, 999);
+
+      if (isNaN(startDate) || isNaN(endDate)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid date format" });
+      }
+
+      dateFilter = { $gte: startDate, $lte: endDate };
+    }
+    const websiteVisit = await WebsiteVisit.findOne({
+      websiteId,
+      ...(startDate && endDate && { "visits.visitedAt": dateFilter }),
+    });
+
+    if (!websiteVisit) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No website visit data found" });
+    }
+
+    const buttonData = await ButtonClick.findOne({
+      websiteId,
+      ...(startDate && endDate && { "buttons.clickedAt": dateFilter }),
+    });
+
+    const buttonClicks = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    if (buttonData?.buttons) {
+      buttonData.buttons.forEach((btn) => {
+        if ([1, 2, 3, 4, 5].includes(btn.buttonId)) {
+          buttonClicks[btn.buttonId] = btn.clicked;
+        }
+      });
+    }
+
+    const filteredVisits = startDate
+      ? websiteVisit.visits.filter(
+          (v) => v.visitedAt >= startDate && v.visitedAt <= endDate
+        )
+      : websiteVisit.visits;
+
+    const totalVisits = filteredVisits.length;
+    const uniqueVisitors = new Set(filteredVisits.map((v) => v.ipAddress)).size;
+    const fifthButtonClicks = buttonClicks[5];
+
+    const conversionPercentage =
+      totalVisits > 0
+        ? ((fifthButtonClicks / totalVisits) * 100).toFixed(2)
+        : "0";
+
+    const sessions = await sessionModel.find({
+      websiteId,
+      ...(startDate && endDate && { updatedAt: dateFilter }),
+    });
+
+    const totalSessions = sessions.length;
+    const totalDuration = sessions.reduce(
+      (acc, session) => acc + (session.sessionDuration || 0),
+      0
+    );
+    const bounces = sessions.filter(
+      (session) => session.interactions === 0
+    ).length;
+
+    const averageSessionDuration = totalSessions
+      ? (totalDuration / totalSessions).toFixed(2)
+      : "0";
+
+    const bounceRate = totalSessions
+      ? ((bounces / totalSessions) * 100).toFixed(2)
+      : "0";
+
+    res.status(200).json({
+      success: true,
+      data: {
+        websiteId,
+        websiteName: websiteVisit.websiteName,
+        uniqueVisitors,
+        totalVisits,
+        conversionPercentage: `${conversionPercentage}%`,
+        buttonClicks,
+        averageSessionDuration: `${averageSessionDuration} seconds`,
+        bounceRate: `${bounceRate}%`,
+        dateRange: startDate
+          ? { startDate, endDate }
+          : { startDate: "All Time", endDate: "All Time" },
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Internal Server Error",
+    });
+  }
+};
+
+exports.handlePostTodo = async (req, res) => {
+  try {
+    const { todos } = req.body;
+
+    if (!Array.isArray(todos)) {
+      return res.status(400).json({
+        success: false,
+        message: "The provided data must be an array of todos",
+      });
+    }
+
+    const todoItems = todos.map((todo) => ({
+      text: todo.text,
+      isCompleted: todo.isCompleted || false,
+    }));
+
+    await Todo.insertMany(todoItems);
+
+    return res.status(200).json({
+      success: true,
+      message: "Todos saved successfully!",
+      data: todoItems,
+    });
+  } catch (error) {
+    console.error("Error while processing todo array:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+    });
+  }
+};
+
+exports.handleGetTodos = async (req, res) => {
+  try {
+    const todos = await Todo.find();
+    if (todos.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No todos found",
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      message: "Todos fetched successfully!",
+      data: todos,
+    });
+  } catch (error) {
+    console.error("Error while fetching todos:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
     });
   }
 };
