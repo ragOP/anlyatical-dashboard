@@ -1,4 +1,5 @@
 const requestIp = require("request-ip");
+const dayjs = require("dayjs");
 const ButtonClick = require("../model/button.model");
 const WebsiteVisit = require("../model/website.model");
 const sessionModel = require("../model/session.model");
@@ -311,45 +312,38 @@ exports.handleSessionTransaction = async (req, res) => {
 exports.handleGetWebsiteAnalytics = async (req, res) => {
   try {
     const { websiteId } = req.params;
-    let { startDate, endDate } = req.query;
-    let dateFilter = {};
 
     if (!websiteId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Website ID is required" });
+      return res.status(400).json({
+        success: false,
+        message: "Website ID is required",
+      });
     }
 
-    if (startDate && endDate) {
-      startDate = new Date(startDate);
-      endDate = new Date(endDate);
-      endDate.setHours(23, 59, 59, 999);
+    let endDate = dayjs().endOf("day").toDate();
+    let startDate = dayjs().subtract(7, "days").startOf("day").toDate();
 
-      if (isNaN(startDate) || isNaN(endDate)) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid date format" });
-      }
+    let dateFilter = { $gte: startDate, $lte: endDate };
 
-      dateFilter = { $gte: startDate, $lte: endDate };
-    }
     const websiteVisit = await WebsiteVisit.findOne({
       websiteId,
-      ...(startDate && endDate && { "visits.visitedAt": dateFilter }),
+      "visits.visitedAt": dateFilter,
     });
 
     if (!websiteVisit) {
-      return res
-        .status(404)
-        .json({ success: false, message: "No website visit data found" });
+      return res.status(404).json({
+        success: false,
+        message: "No website visit data found",
+      });
     }
 
     const buttonData = await ButtonClick.findOne({
       websiteId,
-      ...(startDate && endDate && { "buttons.clickedAt": dateFilter }),
+      "buttons.clickedAt": dateFilter,
     });
 
     const buttonClicks = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+
     if (buttonData?.buttons) {
       buttonData.buttons.forEach((btn) => {
         if ([1, 2, 3, 4, 5].includes(btn.buttonId)) {
@@ -358,11 +352,9 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
       });
     }
 
-    const filteredVisits = startDate
-      ? websiteVisit.visits.filter(
-          (v) => v.visitedAt >= startDate && v.visitedAt <= endDate
-        )
-      : websiteVisit.visits;
+    const filteredVisits = websiteVisit.visits.filter(
+      (v) => v.visitedAt >= startDate && v.visitedAt <= endDate
+    );
 
     const totalVisits = filteredVisits.length;
     const uniqueVisitors = new Set(filteredVisits.map((v) => v.ipAddress)).size;
@@ -375,7 +367,7 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
 
     const sessions = await sessionModel.find({
       websiteId,
-      ...(startDate && endDate && { updatedAt: dateFilter }),
+      updatedAt: dateFilter,
     });
 
     const totalSessions = sessions.length;
@@ -383,9 +375,7 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
       (acc, session) => acc + (session.sessionDuration || 0),
       0
     );
-    const bounces = sessions.filter(
-      (session) => session.interactions === 0
-    ).length;
+    const bounces = sessions.filter((session) => session.interactions === 0).length;
 
     const averageSessionDuration = totalSessions
       ? (totalDuration / totalSessions).toFixed(2)
@@ -394,6 +384,53 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
     const bounceRate = totalSessions
       ? ((bounces / totalSessions) * 100).toFixed(2)
       : "0";
+
+    let history = {};
+    let currentDate = dayjs(endDate);
+
+    for (let i = 0; i <= 7; i++) {
+      const dayString = currentDate.format("dddd");
+      const dateString = currentDate.format("YYYY-MM-DD");
+
+      const dailyVisits = filteredVisits.filter(
+        (visit) => dayjs(visit.visitedAt).format("YYYY-MM-DD") === dateString
+      );
+
+      const dailySessions = sessions.filter(
+        (session) => dayjs(session.updatedAt).format("YYYY-MM-DD") === dateString
+      );
+
+      const dailyTotalVisits = dailyVisits.length;
+      const dailyUniqueVisitors = new Set(dailyVisits.map((v) => v.ipAddress)).size;
+      const dailyBounces = dailySessions.filter((s) => s.interactions === 0).length;
+      const dailyTotalSessions = dailySessions.length;
+
+      const dailyBounceRate = dailyTotalSessions
+        ? ((dailyBounces / dailyTotalSessions) * 100).toFixed(2)
+        : "0";
+
+      const dailyButtonClicks = buttonData?.buttons.filter(
+        (btn) => dayjs(btn.clickedAt).format("YYYY-MM-DD") === dateString
+      );
+
+      const dailyFifthButtonClicks = dailyButtonClicks?.reduce((acc, btn) => {
+        return btn.buttonId === 5 ? acc + btn.clicked : acc;
+      }, 0) || 0;
+
+      const dailyConversionPercentage =
+        dailyTotalVisits > 0
+          ? ((dailyFifthButtonClicks / dailyTotalVisits) * 100).toFixed(2)
+          : "0";
+
+      history[dayString] = {
+        uniqueVisitors: dailyUniqueVisitors,
+        totalVisits: dailyTotalVisits,
+        conversionPercentage: `${dailyConversionPercentage}%`,
+        bounceRate: `${dailyBounceRate}%`,
+      };
+
+      currentDate = currentDate.subtract(1, "day");
+    }
 
     res.status(200).json({
       success: true,
@@ -406,9 +443,8 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
         buttonClicks,
         averageSessionDuration: `${averageSessionDuration} seconds`,
         bounceRate: `${bounceRate}%`,
-        dateRange: startDate
-          ? { startDate, endDate }
-          : { startDate: "All Time", endDate: "All Time" },
+        dateRange: { startDate, endDate },
+        history,
       },
     });
   } catch (error) {
