@@ -218,6 +218,24 @@ exports.handleGetAllWebsiteViews = async (req, res) => {
             ? ((fifthButtonClicks / totalVisits) * 100).toFixed(2)
             : "0";
 
+        startDate && endDate
+          ? (dateFilter = { $gte: startDate, $lte: endDate })
+          : (dateFilter = {});
+
+        const sessions = await sessionModel.find(
+          startDate && endDate
+            ? { websiteId: visit.websiteId, updatedAt: dateFilter }
+            : { websiteId: visit.websiteId }
+        );
+
+        const totalSessions = sessions.length;
+        const bounces = sessions.filter(
+          (session) => session.interactions === 0
+        ).length;
+        const bounceRate = totalSessions
+          ? ((bounces / totalSessions) * 100).toFixed(2)
+          : "0";
+
         let history = [];
         let currentDate = dayjs();
 
@@ -265,6 +283,7 @@ exports.handleGetAllWebsiteViews = async (req, res) => {
           uniqueVisitors,
           totalVisits,
           conversionPercentage: `${conversionPercentage}`,
+          bounceRate: `${bounceRate}`,
           buttonClicks,
           dateRange: startDate
             ? { startDate, endDate }
@@ -442,54 +461,58 @@ exports.handleGetWebsiteAnalytics = async (req, res) => {
       ? ((bounces / totalSessions) * 100).toFixed(2)
       : "0";
 
-      let history = [];
-      let currentDate = dayjs();
-  
-      for (let i = 0; i < 7; i++) {
-        const dateString = currentDate.format("YYYY-MM-DD");
-  
-        const dailyVisits = websiteVisit.visits.filter(
-          (visit) => dayjs(visit.visitedAt).format("YYYY-MM-DD") === dateString
-        );
-  
-        const dailySessions = sessions.filter(
-          (session) => dayjs(session.updatedAt).format("YYYY-MM-DD") === dateString
-        );
-  
-        const dailyTotalVisits = dailyVisits.length;
-        const dailyUniqueVisitors = new Set(dailyVisits.map((v) => v.ipAddress)).size;
-        const dailyBounces = dailySessions.filter((s) => s.interactions === 0).length;
-        const dailyTotalSessions = dailySessions.length;
-  
-        const dailyBounceRate = dailyTotalSessions
-          ? ((dailyBounces / dailyTotalSessions) * 100).toFixed(2)
+    let history = [];
+    let currentDate = dayjs();
+
+    for (let i = 0; i < 7; i++) {
+      const dateString = currentDate.format("YYYY-MM-DD");
+
+      const dailyVisits = websiteVisit.visits.filter(
+        (visit) => dayjs(visit.visitedAt).format("YYYY-MM-DD") === dateString
+      );
+
+      const dailySessions = sessions.filter(
+        (session) =>
+          dayjs(session.updatedAt).format("YYYY-MM-DD") === dateString
+      );
+
+      const dailyTotalVisits = dailyVisits.length;
+      const dailyUniqueVisitors = new Set(dailyVisits.map((v) => v.ipAddress))
+        .size;
+      const dailyBounces = dailySessions.filter(
+        (s) => s.interactions === 0
+      ).length;
+      const dailyTotalSessions = dailySessions.length;
+
+      const dailyBounceRate = dailyTotalSessions
+        ? ((dailyBounces / dailyTotalSessions) * 100).toFixed(2)
+        : "0";
+
+      const dailyButtonClicks = buttonData?.buttons.filter(
+        (btn) => dayjs(btn.clickedAt).format("YYYY-MM-DD") === dateString
+      );
+
+      const dailyFifthButtonClicks =
+        dailyButtonClicks?.reduce(
+          (acc, btn) => (btn.buttonId === 5 ? acc + btn.clicked : acc),
+          0
+        ) || 0;
+
+      const dailyConversionPercentage =
+        dailyTotalVisits > 0
+          ? ((dailyFifthButtonClicks / dailyTotalVisits) * 100).toFixed(2)
           : "0";
-  
-        const dailyButtonClicks = buttonData?.buttons.filter(
-          (btn) => dayjs(btn.clickedAt).format("YYYY-MM-DD") === dateString
-        );
-  
-        const dailyFifthButtonClicks =
-          dailyButtonClicks?.reduce(
-            (acc, btn) => (btn.buttonId === 5 ? acc + btn.clicked : acc),
-            0
-          ) || 0;
-  
-        const dailyConversionPercentage =
-          dailyTotalVisits > 0
-            ? ((dailyFifthButtonClicks / dailyTotalVisits) * 100).toFixed(2)
-            : "0";
-  
-        history.push({
-          date: dayjs(dateString).format("dddd"),
-          uniqueVisitors: dailyUniqueVisitors,
-          totalVisits: dailyTotalVisits,
-          conversionPercentage: `${dailyConversionPercentage}`,
-          bounceRate: `${dailyBounceRate}`,
-        });
-  
-        currentDate = currentDate.subtract(1, "day");
-      }
+
+      history.push({
+        date: dayjs(dateString).format("dddd"),
+        uniqueVisitors: dailyUniqueVisitors,
+        totalVisits: dailyTotalVisits,
+        conversionPercentage: `${dailyConversionPercentage}`,
+        bounceRate: `${dailyBounceRate}`,
+      });
+
+      currentDate = currentDate.subtract(1, "day");
+    }
 
     res.status(200).json({
       success: true,
