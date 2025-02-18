@@ -7,10 +7,15 @@ const { connectToDatabase } = require("./db");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const routes = require("./routes/analytics.routes")
+const routes = require("./routes/analytics.routes");
+const { changeServerTimezone } = require("./utils/serverTimeConfig");
 
 app.use(cors());
 app.use(express.json());
+
+const timeZone = changeServerTimezone(); 
+
+console.log(`Server is running in ${timeZone} timezone.`);
 
 (async () => {
   await connectToDatabase();
